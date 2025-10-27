@@ -1,14 +1,14 @@
-name: CI
+name: Rails CI/CD
 
 on:
-  pull_request:
   push:
-    branches: [ main ]
+    branches: [ main, 'feature/*' ]
+  pull_request:
 
 jobs:
+  # 1️⃣ Security scan
   scan_ruby:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -19,9 +19,10 @@ jobs:
           ruby-version: .ruby-version
           bundler-cache: true
 
-      - name: Scan for common Rails security vulnerabilities using static analysis
+      - name: Brakeman security scan
         run: bin/brakeman --no-pager
 
+  # 2️⃣ Lint code
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -34,6 +35,58 @@ jobs:
           ruby-version: .ruby-version
           bundler-cache: true
 
-      - name: Lint code for consistent style
+      - name: RuboCop lint
         run: bin/rubocop -f github
 
+  # 3️⃣ Run tests
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: .ruby-version
+          bundler-cache: true
+
+      - name: Install dependencies
+        run: bundle install
+
+      - name: Set up database
+        run: bundle exec rails db:create db:migrate
+
+      - name: Run tests
+        run: bundle exec rspec
+
+  # 4️⃣ Build & push Docker image (only if tests pass)
+  docker:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build Docker image
+        run: docker build -t your-dockerhub-username/todo-lab:latest .
+
+      - name: Push Docker image
+        run: docker push your-dockerhub-username/todo-lab:latest
